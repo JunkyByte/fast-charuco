@@ -7,9 +7,10 @@ import cv2.aruco as aruco
 import multiprocessing
 import sys
 
+
 sys.path.append('deepcharuco/src/')
 sys.path.append('deepcharuco/src/models/')
-from inference import load_models, pred_to_keypoints, extract_patches
+from inference import pred_to_keypoints, extract_patches
 from aruco_utils import draw_inner_corners
 from models.model_utils import speedy_bargmax2d
 
@@ -76,11 +77,20 @@ class MultiTracker:
         return board_estim, frames
 
 
+import onnxruntime
 class dcMultiTracker:
     def __init__(self, deepc_path, refinenet_path, col_count, row_count,
                  square_len, marker_len, n_ids=16, device='cuda'):
-        self.deepc, self.refinenet = load_models(deepc_path, refinenet_path,
-                                                 n_ids, device=device)
+        self.deepc_sess = onnxruntime.InferenceSession('./deepc.onnx',
+                                                       providers=['CUDAExecutionProvider',
+                                                                  'CPUExecutionProvider'])
+        self.deepc_name = self.deepc_sess.get_inputs()[0].name
+
+        self.refinenet_sess = onnxruntime.InferenceSession('./refinenet.onnx',
+                                                       providers=['CUDAExecutionProvider',
+                                                                  'CPUExecutionProvider'])
+        self.refinenet_name = self.refinenet_sess.get_inputs()[0].name
+
         self.n_ids = n_ids
         self.col_count = col_count
         self.row_count = row_count
@@ -111,12 +121,9 @@ class dcMultiTracker:
         imgs_gray = (imgs_gray.astype(np.float32) - 128) / 255  # Well we started with this one so...
 
         # Run batched inference with deepc
-        device = "cuda" if next(self.deepc.parameters()).is_cuda else 'cpu'
         with torch.no_grad():
-            inf_imgs = torch.tensor(imgs_gray, device=device).unsqueeze(1)
-            bloc_hat, bids_hat = self.deepc(inf_imgs).values()
-            bloc_hat = bloc_hat.cpu().numpy()
-            bids_hat = bids_hat.cpu().numpy()
+            inf_imgs = np.expand_dims(imgs_gray, axis=1)
+            bloc_hat, bids_hat = self.deepc_sess.run(None, {self.deepc_name: inf_imgs})
 
         bkpts_hat = []
         bids_found = []
@@ -135,17 +142,13 @@ class dcMultiTracker:
             patches.append(extract_patches(imgs_gray[i][None, ...], k))
 
         # Run batched inference with refinenet
-        device = "cuda" if next(self.refinenet.parameters()).is_cuda else 'cpu'
         with torch.no_grad():
             patches_dims = [p.shape[0] for p in patches]
             patches = np.vstack(patches)
 
             if patches.ndim == 3:
                 patches = np.expand_dims(patches, axis=1)
-
-            patches = torch.tensor(patches, device=device)
-            bloc_hat = self.refinenet(patches)
-            bloc_hat = bloc_hat[:, 0, ...].cpu().numpy()
+            bloc_hat = self.refinenet_sess.run(None, {self.refinenet_name: patches})[0][:, 0]
 
         res = []
         c = 0

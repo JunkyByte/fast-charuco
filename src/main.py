@@ -15,7 +15,7 @@ opt_list_str = Optional[List[str]]
 
 def main():
     from tracking_utils import FakeVideoCapture
-    N = 4
+    N = 8
 
     # caps = [FakeVideoCapture('deepcharuco/src/reference/board_image_240x240.jpg', (240, 240))
     #         for _ in range(N)]
@@ -48,21 +48,22 @@ def main():
     last_t = time.time()
     fps = deque([], maxlen=30)
     idx = 0
+    draw = False
 
-    if "DISPLAY" in os.environ:
+    if "DISPLAY" in os.environ and draw:
         w = MagicGrid(800, 800)
     while True:
         frames = [cap.read() for cap in caps]
 
         last_t = time.time()
-        board_estim, frames = multi_tracker.track(frames, mtxs, dists, draw=False)
+        board_estim, frames = multi_tracker.track(frames, mtxs, dists, draw=draw)
 
         fps.append(1 / (time.time() - last_t))
-        if idx > 0 and idx % 100 == 0:
+        if idx > 0 and idx % 30 == 0:
             print('FPS TRACKER', np.mean(fps))
 
         # display the resulting frame
-        if "DISPLAY" in os.environ:
+        if "DISPLAY" in os.environ and draw:
             if w.update(frames) & 0xFF == ord('q'):
                 break
         idx += 1
