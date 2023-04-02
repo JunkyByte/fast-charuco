@@ -1,24 +1,28 @@
 # fast-charuco
-Parallel charuco based pose estimation in python, using deepcharuco.
+Parallel charuco based pose estimation in python, using deepcharuco. onnx models + parallel inference for marginal performance gain.
 
-Performance comparison on Gtx1080ti
+Performance comparison on GTX1080ti
 on an image with 8/16 kpts found.
 ```
 8 images batch
-Vanilla deepc -> ~25fps
-Parallel + onnx -> ~44fps
+Vanilla deepc -> 25fps
+Parallel + onnx -> 44fps
+Gain: +56%
 
 4 images batch
 Vanilla deepc -> 49fps
 Parallel + onnx -> 92fps
+Gain: +53%
 
 2 images batch
 Vanilla deepc -> 99fps
 Parallel + onnx -> 165fps
+Gain: +60%
 
 1 image batch
 Vanilla deepc -> 195fps
 Parallel + onnx -> 300fps
+Gain: +65%
 ```
 
 Code used for conversion
