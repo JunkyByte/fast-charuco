@@ -4,7 +4,7 @@ import cv2
 import os
 import cv2.aruco as aruco
 import time
-from tracking_utils import MultiTracker, dcMultiTracker
+from tracking_utils import dcMultiTracker
 from gridwindow import MagicGrid
 from collections import deque
 from typing import List, Optional
@@ -15,7 +15,7 @@ opt_list_str = Optional[List[str]]
 
 def main():
     from tracking_utils import FakeVideoCapture
-    N = 8
+    N = 1
 
     # caps = [FakeVideoCapture('deepcharuco/src/reference/board_image_240x240.jpg', (240, 240))
     #         for _ in range(N)]

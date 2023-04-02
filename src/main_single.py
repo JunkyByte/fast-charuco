@@ -41,7 +41,7 @@ def inf_single_cv2(img, aruco_dict, parameters, board, col_count,
 
 def main():
     from tracking_utils import FakeVideoCapture
-    N = 8
+    N = 1
 
     calib_data = np.load('../camera_params.npz')
     mtxs = [calib_data['camera_matrix'] for _ in range(N)]

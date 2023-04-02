@@ -1,10 +1,5 @@
 import numpy as np
-import os
-import torch
-from functools import partial
 import cv2
-import cv2.aruco as aruco
-import multiprocessing
 import sys
 import onnxruntime
 
@@ -23,10 +18,10 @@ class dcMultiTracker:
                                                                   'CPUExecutionProvider'])
         self.deepc_name = self.deepc_sess.get_inputs()[0].name
 
-        self.refinenet_sess = onnxruntime.InferenceSession('./refinenet.onnx',
-                                                       providers=['CUDAExecutionProvider',
-                                                                  'CPUExecutionProvider'])
-        self.refinenet_name = self.refinenet_sess.get_inputs()[0].name
+        self.ref_sess = onnxruntime.InferenceSession('./refinenet.onnx',
+                                                     providers=['CUDAExecutionProvider',
+                                                                'CPUExecutionProvider'])
+        self.refinenet_name = self.ref_sess.get_inputs()[0].name
 
         self.n_ids = n_ids
         self.col_count = col_count
@@ -52,23 +47,19 @@ class dcMultiTracker:
         return ret, rvec, tvec
 
     def track(self, frames, mtxs, dists, draw=False):
-        import time
         imgs_gray = np.stack([cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                               for frame in frames])
+                              for frame in frames])
         imgs_gray = (imgs_gray.astype(np.float32) - 128) / 255  # Well we started with this one so...
 
         # Run batched inference with deepc
-        with torch.no_grad():
-            inf_imgs = np.expand_dims(imgs_gray, axis=1)
-            bloc_hat, bids_hat = self.deepc_sess.run(None, {self.deepc_name: inf_imgs})
+        inf_imgs = np.expand_dims(imgs_gray, axis=1)
+        bloc_hat, bids_hat = self.deepc_sess.run(None, {self.deepc_name: inf_imgs})
 
         bkpts_hat = []
         bids_found = []
         patches = []
         for i, (loc_hat, ids_hat) in enumerate(zip(bloc_hat, bids_hat)):
-            loc_hat = loc_hat[None, ...]
-            ids_hat = ids_hat[None, ...]
-            k, id = pred_to_keypoints(loc_hat, ids_hat, self.n_ids)
+            k, id = pred_to_keypoints(loc_hat[None, ...], ids_hat[None, ...], self.n_ids)
             bkpts_hat.append(k)
             bids_found.append(id)
 
@@ -79,20 +70,17 @@ class dcMultiTracker:
             patches.append(extract_patches(imgs_gray[i][None, ...], k))
 
         # Run batched inference with refinenet
-        with torch.no_grad():
-            patches_dims = [p.shape[0] for p in patches]
-            patches = np.vstack(patches)
+        patches_dims = [p.shape[0] for p in patches]
+        patches = np.vstack(patches)
 
-            if patches.ndim == 3:
-                patches = np.expand_dims(patches, axis=1)
-            bloc_hat = self.refinenet_sess.run(None, {self.refinenet_name: patches})[0][:, 0]
+        if patches.ndim == 3:
+            patches = np.expand_dims(patches, axis=1)
+        bloc_hat = self.ref_sess.run(None, {self.refinenet_name: patches})[0][:, 0]
 
         res = []
         c = 0
-        t = time.time()
         for i, (kpts_hat, ids_found) in enumerate(zip(bkpts_hat, bids_found)):
             # Recover loc_hat using dims
-            t = time.time()
             loc_hat = bloc_hat[c: c + patches_dims[i]]
             c += patches_dims[i]
 
