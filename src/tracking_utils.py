@@ -6,7 +6,7 @@ import cv2
 import cv2.aruco as aruco
 import multiprocessing
 import sys
-
+import onnxruntime
 
 sys.path.append('deepcharuco/src/')
 sys.path.append('deepcharuco/src/models/')
@@ -15,69 +15,6 @@ from aruco_utils import draw_inner_corners
 from models.model_utils import speedy_bargmax2d
 
 
-def get_aruco_dict(board_name):
-    return cv2.aruco.Dictionary_get(getattr(cv2.aruco, board_name))
-
-
-def initialize_pool(board_name, col_count, row_count, square_len, marker_len):
-    global aruco_dict, board, parameters
-    parameters = aruco.DetectorParameters_create()
-    aruco_dict = get_aruco_dict(board_name)
-    board = cv2.aruco.CharucoBoard_create(squaresX=col_count,
-                                          squaresY=row_count,
-                                          squareLength=square_len,
-                                          markerLength=marker_len,
-                                          dictionary=aruco_dict)
-
-
-def estimate_board(gray, mtx, dist):
-    corners, ids, rej = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
-    corners, ids, _, _ = aruco.refineDetectedMarkers(gray, board, corners,
-                                                     ids, rej, mtx, dist)
-    ret = False
-    rvec = None
-    tvec = None
-    if np.any(ids is not None):
-        ret, rvec, tvec = aruco.estimatePoseBoard(corners, ids, board,
-                                                  mtx, dist, rvec, tvec)
-    return ret, rvec, tvec, corners
-
-
-class MultiTracker:
-    def __init__(self, board_name, col_count, row_count,
-                 square_len, marker_len, nproc=os.cpu_count()):
-        self.col_count = col_count
-        self.row_count = row_count
-        self.square_len = square_len
-        self.marker_len = marker_len
-        ctx = multiprocessing.get_context('spawn')
-        self.pool = ctx.Pool(processes=nproc,
-                             initializer=partial(initialize_pool, board_name,
-                                                 col_count, row_count,
-                                                 square_len, marker_len))
-
-    def track(self, frames, mtxs, dists, draw=False):
-        grays = [cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) for frame in frames]
-
-        # Populate tvecs and rvecs for each camera that found the board
-        args = ((gray, mtxs[i], dists[i]) for i, gray in enumerate(grays))
-        ret, rvec, tvec, corners = zip(*self.pool.starmap(estimate_board, args))
-        board_estim = list(zip(ret, rvec, tvec))
-
-        if draw:
-            # Draw corners on images
-            for i, corners_i in enumerate(corners):
-                aruco.drawDetectedMarkers(frames[i], corners_i)
-
-            for i, (ret, rvec, tvec) in enumerate(board_estim):
-                if not ret:
-                    continue
-
-                cv2.drawFrameAxes(frames[i], mtxs[i], dists[i], rvec, tvec, 0.01)
-        return board_estim, frames
-
-
-import onnxruntime
 class dcMultiTracker:
     def __init__(self, deepc_path, refinenet_path, col_count, row_count,
                  square_len, marker_len, n_ids=16, device='cuda'):
