@@ -1,5 +1,6 @@
 # fast-charuco
-onnx models + (slightly) parallel inference for marginal performance gain.
+Refer to https://github.com/JunkyByte/deepcharuco for the models / setup.  
+This is a slightly improved inference setup for the deepcharuco models, using onnx + (slightly) parallel inference for performance gain. 
 
 Performance comparison on GTX1080ti
 on an image with 8/16 kpts found (deepc + refinenet).
