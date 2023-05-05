@@ -35,15 +35,13 @@ def main():
     square_len = 0.01
     marker_len = 0.0075
 
-    use_tensorrt = False
-    deepc_path = './deepc' + ('.onnx' if not use_tensorrt else '.engine')
-    refinenet_path = './refinenet' + ('.onnx' if not use_tensorrt else '.engine')
+    deepc_path = './deepc.engine'
+    refinenet_path = './refinenet.engine'
 
     n_ids = 16  # The number of corners (models pretrained use 16 for default board)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    multi_tracker = dcMultiTracker(deepc_path, refinenet_path, use_tensorrt, col_count,
-                                   row_count, square_len, marker_len, n_ids,
-                                   device=device, bs=N)
+    multi_tracker = dcMultiTracker(deepc_path, refinenet_path, N, col_count,
+                                   row_count, square_len, marker_len, n_ids)
 
     # Miscellaneous
     last_t = time.time()
