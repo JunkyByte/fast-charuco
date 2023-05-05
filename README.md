@@ -2,6 +2,9 @@
 Refer to https://github.com/JunkyByte/deepcharuco for the models / setup.  
 This is a slightly improved inference setup for the deepcharuco models, using onnx + (slightly) parallel inference for performance gain. 
 
+## Generate the onnx models by yourself, with version mismatch they might be broken.
+## This a POC, and a work in progress.
+
 Check [src/main.py](src/main.py).
 
 Performance comparison on GTX1080ti
