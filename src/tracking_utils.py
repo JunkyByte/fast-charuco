@@ -2,6 +2,7 @@ import numpy as np
 import cv2
 import sys
 import onnxruntime
+from functools import partial
 
 sys.path.append('deepcharuco/src/')
 sys.path.append('deepcharuco/src/models/')
@@ -9,19 +10,58 @@ from inference import pred_to_keypoints, extract_patches
 from aruco_utils import draw_inner_corners
 from models.model_utils import speedy_bargmax2d
 
+try:  # Add bools -> error stack
+    import pycuda.driver as cuda
+    import pycuda.autoinit
+    import utils_engine as engine_utils
+    import tensorrt as trt
+    has_trt = True
+except ModuleNotFoundError:
+    pass
+
 
 class dcMultiTracker:
-    def __init__(self, deepc_path, refinenet_path, col_count, row_count,
-                 square_len, marker_len, n_ids=16, device='cuda'):
-        self.deepc_sess = onnxruntime.InferenceSession('./deepc.onnx',
-                                                       providers=['CUDAExecutionProvider',
-                                                                  'CPUExecutionProvider'])
-        self.deepc_name = self.deepc_sess.get_inputs()[0].name
+    def __init__(self, deepc_path, refinenet_path, use_tensorrt, col_count, row_count,
+                 square_len, marker_len, n_ids=16, device='cuda', bs=None):
 
-        self.ref_sess = onnxruntime.InferenceSession('./refinenet.onnx',
-                                                     providers=['CUDAExecutionProvider',
-                                                                'CPUExecutionProvider'])
-        self.refinenet_name = self.ref_sess.get_inputs()[0].name
+        if use_tensorrt:
+            assert has_trt
+            assert bs is not None, 'Specify bs with tensorrt'
+            logger = trt.Logger(trt.Logger.ERROR)
+            trt_runtime = trt.Runtime(logger)
+            engine_deepc = engine_utils.load_engine(trt_runtime, deepc_path)
+
+            # This allocates memory for network inputs/outputs on both CPU and GPU
+            dc_in, outputs, bindings, stream = engine_utils.allocate_buffers(engine_deepc, True, bs)
+            # Execution context is needed for inference
+            context = engine_deepc.create_execution_context()
+            self.inf_deepc = partial(engine_utils.do_inference,
+                                     context=context, bindings=bindings,
+                                     inputs=dc_in, outputs=outputs,
+                                     stream=stream)
+            self.deepc_inputs = dc_in
+
+            engine_refinenet = engine_utils.load_engine(trt_runtime, refinenet_path)
+            rn_in, outputs, bindings, stream = engine_utils.allocate_buffers(engine_refinenet, False, bs)
+            # Execution context is needed for inference
+            context = engine_refinenet.create_execution_context()
+            self.inf_refinenet = partial(engine_utils.do_inference,
+                                         context=context, bindings=bindings,
+                                         inputs=rn_in, outputs=outputs,
+                                         stream=stream)
+            self.refinenet_inputs = rn_in
+            self.inference = self._infer_trt
+        else:
+            self.deepc_sess = onnxruntime.InferenceSession(deepc_path,
+                                                           providers=['CUDAExecutionProvider',
+                                                                      'CPUExecutionProvider'])
+            self.deepc_name = self.deepc_sess.get_inputs()[0].name
+
+            self.ref_sess = onnxruntime.InferenceSession(refinenet_path,
+                                                         providers=['CUDAExecutionProvider',
+                                                                    'CPUExecutionProvider'])
+            self.refinenet_name = self.ref_sess.get_inputs()[0].name
+            self.inference = self._infer_onnx
 
         self.n_ids = n_ids
         self.col_count = col_count
@@ -46,6 +86,30 @@ class dcMultiTracker:
                                        camera_matrix, dist_coeffs)
         return ret, rvec, tvec
 
+    def _infer_onnx(self, img, deepc: bool):
+        # Inference deepc
+        if deepc:
+            return self.deepc_sess.run(None, {self.deepc_name: img})
+        # Inference refinenet
+        return self.ref_sess.run(None, {self.refinenet_name: img})[0][:, 0]
+
+    def _infer_trt(self, img, deepc: bool):
+        # Inference deepc
+        if deepc:
+            # np.copyto(self.deepc_inputs[0].host, img.ravel())
+            self.deepc_inputs[0].host[:img.size] = img.ravel()
+            bloc_hat, bids_hat = self.inf_deepc()
+            sh = (img.shape[2] // 8, img.shape[3] // 8)
+            return [bloc_hat.reshape((-1, 65, *sh))[:img.shape[0]],
+                    bids_hat.reshape((-1, 17, *sh))[:img.shape[0]]]
+
+        # Inference refinenet
+        self.refinenet_inputs[0].host[:img.size] = img.ravel()
+        return self.inf_refinenet()[0].reshape((-1, 64, 64))[:img.shape[0]]
+
+    def inference(self, img, deepc: bool):
+        raise ValueError('This should have been overloaded by __init__')
+
     def track(self, frames, mtxs, dists, draw=False):
         imgs_gray = np.stack([cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                               for frame in frames])
@@ -53,13 +117,16 @@ class dcMultiTracker:
 
         # Run batched inference with deepc
         inf_imgs = np.expand_dims(imgs_gray, axis=1)
-        bloc_hat, bids_hat = self.deepc_sess.run(None, {self.deepc_name: inf_imgs})
+        bloc_hat, bids_hat = self.inference(inf_imgs, deepc=True)
+
+        # TODO: If nothing is found the next piece of code does not work WIP
 
         bkpts_hat = []
         bids_found = []
         patches = []
         for i, (loc_hat, ids_hat) in enumerate(zip(bloc_hat, bids_hat)):
             k, id = pred_to_keypoints(loc_hat[None, ...], ids_hat[None, ...], self.n_ids)
+            print('hre', id)
             bkpts_hat.append(k)
             bids_found.append(id)
 
@@ -72,10 +139,11 @@ class dcMultiTracker:
         # Run batched inference with refinenet
         patches_dims = [p.shape[0] for p in patches]
         patches = np.vstack(patches)
+        print(patches.shape)
 
         if patches.ndim == 3:
             patches = np.expand_dims(patches, axis=1)
-        bloc_hat = self.ref_sess.run(None, {self.refinenet_name: patches})[0][:, 0]
+        bloc_hat = self.inference(patches, deepc=False)
 
         res = []
         c = 0
